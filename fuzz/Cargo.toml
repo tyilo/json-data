@@ -1,0 +1,21 @@
+[package]
+name = "json-data-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.json-data]
+path = ".."
+
+[[bin]]
+name = "value_from_json"
+path = "fuzz_targets/value_from_json.rs"
+test = false
+doc = false
+bench = false

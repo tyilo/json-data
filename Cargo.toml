@@ -1,0 +1,16 @@
+[package]
+name = "json-data"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "json-test"
+
+[dependencies]
+serde_json = { version = "1.0.133", optional = true }
+
+[features]
+serde_json = ["dep:serde_json"]
+
+[dev-dependencies]
+proptest = "1.5.0"

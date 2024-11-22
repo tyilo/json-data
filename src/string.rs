@@ -1,5 +1,7 @@
 use core::str;
-use std::{char, fmt::Display, string::FromUtf16Error};
+use std::fmt::Display;
+
+use wtf8::{CodePoint, Wtf8Buf};
 
 use crate::{error::Error, parser::Reader};
 
@@ -9,10 +11,16 @@ use crate::{error::Error, parser::Reader};
 /// [surrogate code points](https://www.unicode.org/glossary/#surrogate_code_point).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JsonString {
-    inner: Vec<u16>,
+    inner: Wtf8Buf,
 }
 
-pub struct InvalidUnicodeString(pub JsonString);
+impl Default for JsonString {
+    fn default() -> Self {
+        Self {
+            inner: Wtf8Buf::new(),
+        }
+    }
+}
 
 fn parse_hex_byte(byte: u8) -> Result<u8, Error> {
     match byte {
@@ -32,8 +40,16 @@ fn parse_hex_escape(bytes: &[u8; 4]) -> Result<u16, Error> {
     Ok(r)
 }
 
+fn u16_to_code_point(v: u16) -> CodePoint {
+    CodePoint::from_u32(v.into()).unwrap()
+}
+
+fn u8_to_code_point(v: u8) -> CodePoint {
+    CodePoint::from_u32(v.into()).unwrap()
+}
+
 pub(crate) fn read_string(reader: &mut Reader) -> Result<JsonString, Error> {
-    let mut inner = Vec::new();
+    let mut inner = Wtf8Buf::new();
     match reader.read_byte()? {
         b'"' => {}
         b => {
@@ -57,12 +73,12 @@ pub(crate) fn read_string(reader: &mut Reader) -> Result<JsonString, Error> {
                     b'u' => {
                         let hex = reader.read_bytes::<4>()?;
                         let v = parse_hex_escape(hex)?;
-                        inner.push(v);
+                        inner.push(u16_to_code_point(v));
                         continue;
                     }
                     b => return Err(Error::UnexpectedEscape(b)),
                 };
-                inner.push(v.into());
+                inner.push(u8_to_code_point(v));
             }
             b'"' => {
                 reader.read_byte().unwrap();
@@ -72,9 +88,7 @@ pub(crate) fn read_string(reader: &mut Reader) -> Result<JsonString, Error> {
                 if b < 0x20 {
                     return Err(Error::InvalidControlCharacter(b));
                 }
-                let char = reader.read_char()?;
-                let mut buf = [0; 2];
-                inner.extend_from_slice(char.encode_utf16(&mut buf));
+                inner.push_char(reader.read_char()?);
             }
         }
     }
@@ -86,9 +100,9 @@ impl Display for JsonString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "\"")?;
 
-        for c in char::decode_utf16(self.inner.iter().copied()) {
-            match c {
-                Ok(c) => {
+        for c in self.inner.code_points() {
+            match c.to_char() {
+                Some(c) => {
                     let escape_char = match c {
                         '"' => '"',
                         '\\' => '\\',
@@ -109,7 +123,7 @@ impl Display for JsonString {
                     };
                     write!(f, "\\{escape_char}")?;
                 }
-                Err(e) => write!(f, "\\u{:04x}", e.unpaired_surrogate())?,
+                None => write!(f, "\\u{:04x}", c.to_u32())?,
             }
         }
 
@@ -118,58 +132,52 @@ impl Display for JsonString {
 }
 
 impl JsonString {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn from_json(bytes: &[u8]) -> Result<Self, Error> {
         Reader::read_all(bytes, read_string)
     }
 
-    pub fn as_string(&self) -> Option<String> {
-        String::from_utf16(&self.inner).ok()
+    pub fn from_ill_formed_utf16(v: &[u16]) -> Self {
+        Self {
+            inner: Wtf8Buf::from_ill_formed_utf16(v),
+        }
     }
 
-    pub fn as_string_lossy(&self) -> String {
-        String::from_utf16_lossy(&self.inner)
+    pub fn into_string(self) -> Result<String, Self> {
+        self.inner
+            .into_string()
+            .map_err(|inner| JsonString { inner })
+    }
+
+    pub fn into_string_lossy(self) -> String {
+        self.inner.into_string_lossy()
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        self.inner.as_str()
+    }
+
+    pub fn to_ill_formed_utf16(&self) -> impl Iterator<Item = u16> + '_ {
+        self.inner.to_ill_formed_utf16()
     }
 }
 
 impl From<&str> for JsonString {
     fn from(value: &str) -> Self {
         Self {
-            inner: value.encode_utf16().collect(),
+            inner: Wtf8Buf::from_str(value),
         }
     }
 }
 
 impl From<String> for JsonString {
     fn from(value: String) -> Self {
-        value.as_str().into()
-    }
-}
-
-impl TryFrom<&JsonString> for String {
-    type Error = FromUtf16Error;
-
-    fn try_from(value: &JsonString) -> Result<Self, Self::Error> {
-        String::from_utf16(&value.inner)
-    }
-}
-
-impl TryFrom<JsonString> for String {
-    type Error = InvalidUnicodeString;
-
-    fn try_from(value: JsonString) -> Result<Self, Self::Error> {
-        (&value).try_into().map_err(|_| InvalidUnicodeString(value))
-    }
-}
-
-impl From<JsonString> for Vec<u16> {
-    fn from(value: JsonString) -> Self {
-        value.inner
-    }
-}
-
-impl From<Vec<u16>> for JsonString {
-    fn from(value: Vec<u16>) -> Self {
-        Self { inner: value }
+        Self {
+            inner: Wtf8Buf::from_string(value),
+        }
     }
 }
 
@@ -182,7 +190,7 @@ mod test {
         assert_eq!(
             JsonString::from_json(r#""鑅""#.as_bytes())
                 .unwrap()
-                .as_string()
+                .as_str()
                 .unwrap(),
             "鑅"
         );
@@ -201,8 +209,11 @@ mod test {
     #[test]
     fn test_lone_surrogate() {
         assert_eq!(
-            JsonString::from_json(br#""\ud800""#),
-            Ok(vec![0xd800].into())
+            JsonString::from_json(br#""\ud800""#)
+                .unwrap()
+                .to_ill_formed_utf16()
+                .collect::<Vec<_>>(),
+            vec![0xd800]
         );
         assert_eq!(
             JsonString::from_json(br#""\ud800""#).unwrap().to_string(),

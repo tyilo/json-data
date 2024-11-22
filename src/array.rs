@@ -88,7 +88,7 @@ impl TryFrom<Vec<serde_json::Value>> for Array {
 
 #[cfg(feature = "serde_json")]
 impl TryFrom<Array> for Vec<serde_json::Value> {
-    type Error = crate::string::InvalidUnicodeString;
+    type Error = crate::InvalidUnicodeString;
 
     fn try_from(value: Array) -> Result<Self, Self::Error> {
         value

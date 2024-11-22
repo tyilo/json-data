@@ -109,12 +109,17 @@ impl TryFrom<serde_json::Map<String, serde_json::Value>> for Object {
 
 #[cfg(feature = "serde_json")]
 impl TryFrom<Object> for serde_json::Map<String, serde_json::Value> {
-    type Error = crate::string::InvalidUnicodeString;
+    type Error = crate::InvalidUnicodeString;
 
     fn try_from(value: Object) -> Result<Self, Self::Error> {
         value
             .into_iter()
-            .map(|(k, v)| Ok((k.try_into()?, v.try_into()?)))
+            .map(|(k, v)| {
+                Ok((
+                    k.into_string().map_err(crate::InvalidUnicodeString)?,
+                    v.try_into()?,
+                ))
+            })
             .collect::<Result<serde_json::Map<String, serde_json::Value>, _>>()
     }
 }

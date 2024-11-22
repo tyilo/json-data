@@ -148,6 +148,9 @@ impl Display for Value {
 pub use serde_json;
 
 #[cfg(feature = "serde_json")]
+pub struct InvalidUnicodeString(pub JsonString);
+
+#[cfg(feature = "serde_json")]
 pub struct InvalidSerdeJsonNumber(pub serde_json::Number);
 
 #[cfg(feature = "serde_json")]
@@ -168,14 +171,16 @@ impl TryFrom<serde_json::Value> for Value {
 
 #[cfg(feature = "serde_json")]
 impl TryFrom<Value> for serde_json::Value {
-    type Error = crate::string::InvalidUnicodeString;
+    type Error = InvalidUnicodeString;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         Ok(match value {
             Value::Null => serde_json::Value::Null,
             Value::Bool(b) => serde_json::Value::Bool(b),
             Value::Number(v) => serde_json::Value::Number(v.into()),
-            Value::String(s) => serde_json::Value::String(s.try_into()?),
+            Value::String(s) => {
+                serde_json::Value::String(s.into_string().map_err(InvalidUnicodeString)?)
+            }
             Value::Array(arr) => serde_json::Value::Array(arr.try_into()?),
             Value::Object(obj) => serde_json::Value::Object(obj.try_into()?),
         })
@@ -220,11 +225,12 @@ mod test {
     }
 
     fn interesting_arb_string() -> impl Strategy<Value = JsonString> {
-        prop::collection::vec(interesting_u16(), 0..10).prop_map(JsonString::from)
+        prop::collection::vec(interesting_u16(), 0..10)
+            .prop_map(|v| JsonString::from_ill_formed_utf16(&v))
     }
 
     fn arb_string() -> impl Strategy<Value = JsonString> {
-        any::<Vec<u16>>().prop_map(JsonString::from)
+        any::<Vec<u16>>().prop_map(|v| JsonString::from_ill_formed_utf16(&v))
     }
 
     fn arb_value() -> impl Strategy<Value = Value> {

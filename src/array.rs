@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{error::Error, parser::Reader, read_value, Value};
 
@@ -14,6 +17,20 @@ impl Array {
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, Error> {
         Reader::read_all(bytes, read_array)
+    }
+}
+
+impl Deref for Array {
+    type Target = Vec<Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for Array {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 

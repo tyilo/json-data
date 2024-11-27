@@ -1,15 +1,51 @@
 use core::str;
-use std::fmt::Display;
+use std::{borrow::Borrow, fmt::Display, mem::transmute};
 
-use wtf8::{CodePoint, Wtf8Buf};
+use wtf8::{CodePoint, Wtf8, Wtf8Buf};
 
 use crate::{error::Error, parser::Reader};
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct JsonStr {
+    inner: Wtf8,
+}
+
+impl JsonStr {
+    pub(crate) fn from_wtf8(wtf8: &Wtf8) -> &Self {
+        // SAFETY: `Wtf8` and `JsonStr` has the same layout
+        unsafe { transmute::<&Wtf8, &Self>(wtf8) }
+    }
+
+    pub fn from_str(s: &str) -> &Self {
+        Self::from_wtf8(Wtf8::from_str(s))
+    }
+}
+
+impl Borrow<JsonStr> for JsonString {
+    fn borrow(&self) -> &JsonStr {
+        JsonStr::from_wtf8(self.as_wtf8())
+    }
+}
+
+impl<'a, 'b: 'a> From<&'b str> for &'a JsonStr {
+    fn from(value: &'b str) -> Self {
+        JsonStr::from_str(value)
+    }
+}
+
+impl<'a, 'b: 'a> From<&'b String> for &'a JsonStr {
+    fn from(value: &'b String) -> Self {
+        JsonStr::from_str(value)
+    }
+}
 
 /// A JSON string is just a list of 16-bit values.
 ///
 /// They are often valid UTF-16 strings, however they can contain lonely
 /// [surrogate code points](https://www.unicode.org/glossary/#surrogate_code_point).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub struct JsonString {
     inner: Wtf8Buf,
 }
@@ -162,6 +198,10 @@ impl JsonString {
 
     pub fn to_ill_formed_utf16(&self) -> impl Iterator<Item = u16> + '_ {
         self.inner.to_ill_formed_utf16()
+    }
+
+    pub(crate) fn as_wtf8(&self) -> &Wtf8 {
+        &self.inner
     }
 }
 
